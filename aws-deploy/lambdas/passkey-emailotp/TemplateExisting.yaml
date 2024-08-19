@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-LambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaSecretsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref LoginIDClientSecret
+        - PolicyName: LambdaLogsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: "*"
+        - PolicyName: CognitoPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                Resource: "*"
+
+  DefineAuthChallenge:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-DefineAuthChallenge
+      CodeUri:
+        Bucket: !Sub ${S3Bucket}
+        Key: !Sub ${S3Directory}/DefineAuthChallenge.zip
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 1024
+      Timeout: 30
+      Tracing: Active
+
+  DefineAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DefineAuthChallenge.Arn
+      Principal: cognito-idp.amazonaws.com
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolID}
+
+  CreateAuthChallenge:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-CreateAuthChallenge
+      CodeUri:
+        Bucket: !Sub ${S3Bucket}
+        Key: !Sub ${S3Directory}/CreateAuthChallenge.zip
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 1024
+      Timeout: 30
+      Tracing: Active
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          LOGINID_BASE_URL: !Ref LOGINIDBaseURL
+          LOGINID_SECRET_NAME: !Sub ${AWS::StackName}-loginid-keys
+          SES_SENDER_EMAIL: !Ref SESSenderEmail
+
+  CreateAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CreateAuthChallenge.Arn
+      Principal: cognito-idp.amazonaws.com
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolID}
+      
+  VerifyAuthChallenge:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-VerifyAuthChallenge
+      CodeUri:
+        Bucket: !Sub ${S3Bucket}
+        Key: !Sub ${S3Directory}/VerifyAuthChallenge.zip
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 1024
+      Timeout: 30
+      Tracing: Active
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          LOGINID_BASE_URL: !Ref LOGINIDBaseURL
+          LOGINID_SECRET_NAME: !Sub ${AWS::StackName}-loginid-keys
+
+  VerifyAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt VerifyAuthChallenge.Arn
+      Principal: cognito-idp.amazonaws.com
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolID}
+
+  LoginIDClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}-loginid-keys
+      Description: LoginID keys
+      SecretString: !Ref LOGINIDAPIKeyID
+
+  LoginIDKeysSecretPolicy:
+    Type: AWS::SecretsManager::ResourcePolicy
+    Properties:
+      SecretId: !Ref LoginIDClientSecret
+      ResourcePolicy:
+        Version: 2012-10-17
+        Statement:
+          - Resource: "*"
+            Action: secretsmanager:GetSecretValue
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+  AttachLambdasToCognitoUserPool:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-AttachLambdasToCognitoUserPool
+      Handler: index.handler
+      Runtime: python3.9
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              print("BEGIN lamdba attachment")
+              print("EVENT: " , event)
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              user_pool_id = event['ResourceProperties']['UserPoolId']
+              define_auth_challenge_arn = event['ResourceProperties']['DefineAuthChallengeArn']
+              create_auth_challenge_arn = event['ResourceProperties']['CreateAuthChallengeArn']
+              verify_auth_challenge_arn = event['ResourceProperties']['VerifyAuthChallengeArn']
+
+              client = boto3.client('cognito-idp')
+
+              try:
+                  user_pool_details = client.describe_user_pool(UserPoolId=user_pool_id)
+                  auto_verified_attributes = user_pool_details['UserPool']['AutoVerifiedAttributes']
+                  print("DESCRIBE: " , user_pool_details) 
+
+                  existing_lambdaConfig = user_pool_details['UserPool']['LambdaConfig']
+                  
+                  if 'DefineAuthChallenge'  not in existing_lambdaConfig:
+                    existing_lambdaConfig['DefineAuthChallenge'] = define_auth_challenge_arn
+                  else:
+                    print("DefineAuthChallenge already existed!")
+
+                  if 'CreateAuthChallenge'  not in existing_lambdaConfig:
+                    existing_lambdaConfig['CreateAuthChallenge'] = create_auth_challenge_arn
+                  else:
+                    print("CreateAuthChallenge already existed!")
+                  
+                  if 'VerifyAuthChallengeResponse'  not in existing_lambdaConfig:
+                    existing_lambdaConfig['VerifyAuthChallengeResponse'] = verify_auth_challenge_arn
+                  else:
+                    print("VerifyAuthChallengeResponse already existed!")
+
+                  print("CONFIG: " , existing_lambdaConfig)
+                  user_pool_client_details = client.describe_user_pool_client(UserPoolId=user_pool_id, ClientId=event['ResourceProperties']['ClientId'])
+                  explicit_auth_flows = user_pool_client_details['UserPoolClient']['ExplicitAuthFlows']
+                  if 'ALLOW_CUSTOM_AUTH' not in explicit_auth_flows or 'CUSTOM_AUTH_FLOW_ONLY' not in explicit_auth_flows:
+                      explicit_auth_flows.append('ALLOW_CUSTOM_AUTH')
+                      client.update_user_pool_client(
+                          UserPoolId=user_pool_id,
+                          ClientId=event['ResourceProperties']['ClientId'],
+                          ExplicitAuthFlows=explicit_auth_flows
+                      )
+
+                  client.update_user_pool(
+                      UserPoolId=user_pool_id,
+                      LambdaConfig=existing_lambdaConfig,
+                      AutoVerifiedAttributes=auto_verified_attributes,
+                  )
+                  print("END lamdba attachment")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print("ERROR: ", e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+
+  AttachLambdasToCognitoUserPoolCustomResource:
+    Type: Custom::AttachLambdasToCognitoUserPool
+    Properties:
+      ServiceToken: !GetAtt AttachLambdasToCognitoUserPool.Arn
+      UserPoolId: !Ref CognitoUserPoolID
+      ClientId: !Ref CognitoClientID
+      DefineAuthChallengeArn: !GetAtt DefineAuthChallenge.Arn
+      CreateAuthChallengeArn: !GetAtt CreateAuthChallenge.Arn
+      VerifyAuthChallengeArn: !GetAtt VerifyAuthChallenge.Arn
+
+Outputs:
+  DefineAuthChallengeArn:
+    Value: !GetAtt DefineAuthChallenge.Arn
+  CreateAuthChallengeArn:
+    Value: !GetAtt CreateAuthChallenge.Arn
+  VerifyAuthChallengeArn:
+    Value: !GetAtt VerifyAuthChallenge.Arn
+
+Parameters:
+  S3Bucket:
+    Type: String
+    Description: "S3Bucket name"
+  S3Directory:
+    Type: String
+    Description: "S3Bucket Directory"
+  LOGINIDBaseURL:
+    Type: String
+    Description: "BaseURL required for LoginID service"
+  LOGINIDAPIKeyID:
+    Type: String
+    NoEcho: true
+    Description: "API key ID required for LoginID service"
+  SESSenderEmail:
+    Type: String
+    Description: "A verified SES sender email able to send OTP's"
+  CognitoUserPoolID:
+    Type: String
+    Description: "The Cognito User Pool ID to apply custom authentication with LoginID passkeys"
+  CognitoClientID:
+    Type: String
+    Description: "The Cognito User Pool Client ID to apply custom authentication with LoginID passkeys"
