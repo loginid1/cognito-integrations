@@ -1,9 +1,9 @@
-STACK_NAME=PD-Passkey
+STACK_NAME=PD-ABCBankLambdas
 REGION=us-west-1
-BASEURL=https://18756abb-a6e8-4a54-b3ab-64348c55bf62.api.loginid.io
+BASEURL=<loginid baseurl>
 APIKEY=$APIKEY
-COGNITO_ID=us-west-1_2tS3kjyK9
-COGNITO_CLIENT_ID=4tn5362c1q77nm46kui9cguu0k
+COGNITO_ID=<cognito pool id>
+COGNITO_CLIENT_ID=<cognito client id>
 S3Bucket=cognito-loginid
 S3Directory=lambdas/nodejs/passkey-only
 

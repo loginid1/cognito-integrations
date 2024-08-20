@@ -1,4 +1,4 @@
-STACK_NAME=PD-PasskeyCPO
+STACK_NAME=PD-ABCBankPool
 REGION=us-west-1
 
 export AWS_REGION=$REGION
