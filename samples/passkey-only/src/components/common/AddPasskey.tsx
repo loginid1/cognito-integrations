@@ -37,8 +37,13 @@ export function AddPasskey(props: AddPasskeyProps) {
   const handlerSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
-      const session = await LoginidService.client.addPasskey(props.email);
-      props.onComplete(true);
+      const token = LoginidService.client.getSessionInfo().idToken;
+      if(token){
+        const session = await LoginidService.client.createPasskey(props.email, token);
+        props.onComplete(true);
+      } else {
+        setError("error create passkey - not authorized")
+      }
     } catch (e: any) {
       setError(e.message || e.msg || e);
     }

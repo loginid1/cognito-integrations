@@ -16,13 +16,11 @@
  */
 
 
-
+"use client";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Button, Input, UnstyledButton, Text, Title, Flex, Group } from "@mantine/core";
 import { LoginidService } from "@/services/loginid";
 import {Link, useNavigate} from "react-router-dom";
-import { ISignInFallbackCallback } from "@loginid/cognito-web-sdk";
-
 
 
 export interface LoginPromptProps {
@@ -31,15 +29,13 @@ export interface LoginPromptProps {
 
 export default function LoginPromptPassword(props: LoginPromptProps) {
   const [error, setError] = useState("");
-  const [abortController, setAbortController] = useState(new AbortController());
-  const count = useRef(0);
+  const [abortController] = useState(new AbortController());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(true);
 
   const router = useNavigate();
   useEffect(() => {
-
 
     setShowPassword(!LoginidService.client.hasTrustedDevice())
     handleAutoFill();
@@ -53,7 +49,7 @@ export default function LoginPromptPassword(props: LoginPromptProps) {
 
   async function handleAutoFill() {
     try {
-      const result = await LoginidService.client.signInWithPasskeyAutofill({ abortController: abortController });
+      await LoginidService.client.authenticateWithPasskeyAutofill({ abortController: abortController });
       return router("/manage");
 
     } catch (e: any) {
@@ -69,18 +65,18 @@ export default function LoginPromptPassword(props: LoginPromptProps) {
       setError("");
 
       if (password !== "") {
-        await LoginidService.client.signInWithPassword(email, password);
+        await LoginidService.client.authenticateWithPassword(email, password);
+        // complete signin and go to create passkey suggestion
         return props.onComplete(email, "passkey");
 
       } else {
-
-        const fallback: ISignInFallbackCallback = {
-          onFallback: async (username: string, _options: string[]) => {
-              setShowPassword(true);
-          }
-        };
-        await LoginidService.client.signInPasskey(email, { abortController, fallback });
-        return props.onComplete(email, "");
+        const result = await LoginidService.client.authenticateWithPasskey(email, { abortController});
+        if(result.isAuthenticated) {
+          return props.onComplete(email, "");
+        } else {
+          // fallback to password
+          setShowPassword(true);
+        }
       }
     } catch (e: any) {
       setError(e.message || e.msg);
@@ -110,6 +106,7 @@ export default function LoginPromptPassword(props: LoginPromptProps) {
               mb="md"
               type="password"
               value={password}
+              autoComplete="password webauthn"
               w="100%"
             />
           </Input.Wrapper>

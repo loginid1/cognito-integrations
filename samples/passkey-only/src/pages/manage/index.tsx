@@ -32,7 +32,7 @@ export default function ManagePage() {
     const [activeTab, setActiveTab] = useState<string | null>('home');
     const iconStyle = { width: rem(12), height: rem(12) };
     async function logout() {
-        LoginidService.client.signOut();
+        LoginidService.client.logout();
         router("/login");
     }
 

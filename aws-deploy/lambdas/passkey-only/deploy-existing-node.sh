@@ -1,4 +1,4 @@
-STACK_NAME=PD-ABCBankLambdas
+STACK_NAME=<stack name>
 REGION=us-west-1
 BASEURL=<loginid baseurl>
 APIKEY=$APIKEY

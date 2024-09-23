@@ -44,9 +44,14 @@ export default function SignupPromptPassword(props: SignupPromptProps) {
       // clear error
       setError("");
       // signup passwordless user
-      const user = await LoginidService.client.signUpWithPassword(email,password,  confPassword, true);
-      const username = user.getUsername();
-      return props.onComplete(username, "passkey");
+      const autoSignIn = true;
+      const result = await LoginidService.client.signUpWithPassword(email,password,  confPassword, autoSignIn);
+      if(result.isAuthenticated) {
+        return props.onComplete(email, "passkey");
+      } else{
+        /// user is created but cannot auto sign in redirect to login
+        router("/login");
+      }
     } catch (e: any) {
       console.log(e);
       setError(e.message || e.msg || e );
